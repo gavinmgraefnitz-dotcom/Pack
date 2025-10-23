@@ -1,19 +1,39 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Pokémon Pack Opening Simulator — Online Base Set (Weighted)</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pokémon Pack Opening Simulator — Hosted (Weighted, Worker Proxy)</title>
 <style>
   :root{
     --bg:#040406; --panel:#071124; --accent:#ffd43b; --text:#e6f0ff;
     --card-w:210px; --card-h:294px;
   }
   *{box-sizing:border-box;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial;}
-  body{margin:0;min-height:100vh;background:
-    radial-gradient(circle at 10% 10%, rgba(255,212,59,0.03), transparent 8%),
-    linear-gradient(180deg,#000 0%, #071124 60%); color:var(--text); display:flex;align-items:center;justify-content:center;padding:20px;}
-  .app{width:1000px;max-width:96vw;background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border-radius:12px;padding:18px;box-shadow:0 10px 40px rgba(2,8,23,0.6);border:1px solid rgba(255,255,255,0.03)}
+  html,body{height:100%}
+  body{
+    margin:0;
+    min-height:100vh;
+    background:
+      radial-gradient(circle at 10% 10%, rgba(255,212,59,0.03), transparent 8%),
+      linear-gradient(180deg,#000 0%, #071124 60%);
+    color:var(--text);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+  }
+
+  .app{
+    width:1000px;
+    max-width:96vw;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+    border-radius:12px;
+    padding:18px;
+    box-shadow:0 10px 40px rgba(2,8,23,0.6);
+    border:1px solid rgba(255,255,255,0.03);
+  }
+
   header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
   h1{font-size:20px;margin:0;color:var(--accent);font-weight:800;text-shadow:0 6px 18px rgba(255,180,60,0.08)}
   .controls{display:flex;gap:12px;align-items:center}
@@ -24,6 +44,7 @@
   .left{flex:1;display:flex;flex-direction:column;gap:12px}
   .panel{background:linear-gradient(180deg,#071a2a,#071a2a);border-radius:12px;padding:16px;border:1px solid rgba(255,255,255,0.02)}
   .pack-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px}
+  .pack-title{font-weight:800}
   .pack-art{height:90px;width:220px;border-radius:10px;background:linear-gradient(135deg,#07243a,#0b2f4a);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.06);font-weight:900;font-size:36px;overflow:hidden}
   .cards-stage{height:340px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);border-radius:12px;display:flex;align-items:center;justify-content:flex-start;padding:18px;overflow-x:auto;gap:14px}
   .revealed-card{width:var(--card-w);height:var(--card-h);border-radius:12px;background:#000;border:2px solid rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;position:relative;transform-style:preserve-3d;flex:0 0 auto;box-shadow:0 10px 30px rgba(0,0,0,0.45);overflow:hidden}
@@ -62,9 +83,10 @@
 </style>
 </head>
 <body>
+  <!-- top-left status -->
   <div id="statusBox" class="yellow">Loading Base Set cards...</div>
 
-  <div class="app" role="application" aria-label="Pokemon Pack Opening Simulator — Online Base Set">
+  <div class="app" role="application" aria-label="Pokemon Pack Opening Simulator">
     <header>
       <h1>Pokémon Pack Opening Simulator</h1>
       <div class="controls">
@@ -80,7 +102,7 @@
         <div class="pack-header">
           <div>
             <div id="packTitle" class="pack-title">Base Set — Live</div>
-            <div id="packDesc" class="muted">Real Base Set cards via Pokémon TCG API • 5 cards • 100 coins</div>
+            <div id="packDesc" class="muted">Real Base Set cards via API • 5 cards • 100 coins</div>
           </div>
           <div class="pack-art" id="packArt">BASE</div>
         </div>
@@ -100,39 +122,40 @@
 
     <footer>
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>Online mode — fetching Base Set cards from the Pokémon TCG API (images from official CDN).</div>
+        <div>Hosted mode — using your Cloudflare Worker proxy for API calls.</div>
         <div class="muted">Prototype — weighted packs</div>
       </div>
     </footer>
   </div>
 
 <script>
-/* Final host-ready v9 weighted pack opener (Base Set)
-   - Embedded API key (user-provided)
-   - Pack composition: 3 commons, 1 uncommon, 1 rare-or-better
-   - Preloads images and flips each card sequentially
-   - Clean top-left status (Loading / Ready / Failed)
-   - Retries fetch up to 3 times
+/*
+  Final host-ready single-file HTML
+  - Uses Cloudflare Worker proxy (your URL below) to fetch Base Set
+  - Weighted 5-card pack: 3 common, 1 uncommon, 1 rare-or-better
+  - Plays a synthesized digital whoosh (WebAudio) AFTER loading text finishes, then flips cards
+  - Coins & collection persisted in localStorage
+  - Clean top-left status, no console logs shown to players
 */
 
-// ------------- CONFIG -------------
+/* ---------------- CONFIG ---------------- */
 const STARTING_COINS = 500;
 const PACK_COST = 100;
 const CARDS_PER_PACK = 5;
-const COIN_KEY = 'pps_weighted_coins';
-const COLLECTION_KEY = 'pps_weighted_collection';
+const COIN_KEY = 'pps_final_coins';
+const COLLECTION_KEY = 'pps_final_collection';
 
-// Put provided API key here (already set)
-const API_KEY = '7c44b676-97db-490b-9971-0cdcdc8667b6';
+// Your Cloudflare Worker proxy URL (provided by you)
+const WORKER_PROXY = 'https://gentle-lake-18f4.gavin-m-graefnitz.workers.dev/?url=';
 
-const BASE_SET_ID = 'base1';
-const PAGE_SIZE = 250;
-const SEARCH_URL = `https://api.pokemontcg.io/v2/cards?q=set.id:${BASE_SET_ID}&pageSize=${PAGE_SIZE}`;
+// Base Set API endpoint (will be passed through worker)
+const API_ENDPOINT = 'https://api.pokemontcg.io/v2/cards?q=set.id:base1&pageSize=250';
+const FETCH_URL = WORKER_PROXY + encodeURIComponent(API_ENDPOINT);
 
-// Rarity buckets for UI and glow
+// Rarity bucket names used in UI classes
 const RARITY_UI = { common:'rar-common', uncommon:'rar-uncommon', rare:'rar-rare', ultra:'rar-ultra', secret:'rar-secret' };
 
-// ------------- DOM -------------
+/* ---------------- DOM ---------------- */
 const statusBox = document.getElementById('statusBox');
 const openBtn = document.getElementById('openPackBtn');
 const resetBtn = document.getElementById('resetBtn');
@@ -140,23 +163,21 @@ const cardsStage = document.getElementById('cardsStage');
 const collectionGrid = document.getElementById('collectionGrid');
 const coinsEl = document.getElementById('coins');
 
-// ------------- STATE -------------
+/* ---------------- STATE ---------------- */
 let coins = parseInt(localStorage.getItem(COIN_KEY) || STARTING_COINS);
 let collection = JSON.parse(localStorage.getItem(COLLECTION_KEY) || '{}');
 coinsEl.textContent = coins;
 let loaded = false;
-
-// buckets
 let cardsByRarity = { common:[], uncommon:[], rare:[], ultra:[], secret:[] };
 
-// small fallback SVG (data URI)
+/* fallback small card back (embedded) */
 const CARD_BACK_DATAURI = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='750' height='1050' viewBox='0 0 750 1050'><rect width='750' height='1050' fill='#071124'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#ffd43b' font-family='Arial' font-size='40'>Pokémon Card</text></svg>`);
 
-// ------------- UTIL -------------
+/* ---------------- UTIL ---------------- */
 function saveState(){ localStorage.setItem(COIN_KEY, coins); localStorage.setItem(COLLECTION_KEY, JSON.stringify(collection)); coinsEl.textContent = coins; }
 function setStatus(text, variant='yellow'){ statusBox.textContent = text; statusBox.className = variant; }
 
-// classify rarity heuristics
+/* gentle classification of API rarity to buckets */
 function classifyRarity(apiRarity, card){
   if (!apiRarity) return 'common';
   const r = String(apiRarity).toLowerCase();
@@ -172,57 +193,64 @@ function classifyRarity(apiRarity, card){
   return 'common';
 }
 
-// fetch Base Set with retries (silently retries, display status)
-async function fetchBaseSet(retries = 3){
+/* fetch via your worker with up to n retries */
+async function fetchWithRetries(url, attempts = 3){
   setStatus('Loading Base Set cards...', 'yellow');
-  for (let attempt=1; attempt<=retries; attempt++){
+  for (let i=0;i<attempts;i++){
     try {
-      const headers = API_KEY ? { 'X-Api-Key': API_KEY } : {};
-      const resp = await fetch(SEARCH_URL, { headers });
-      if (!resp.ok) throw new Error('bad');
-      const json = await resp.json();
-      const cards = json.data || [];
-      // reset buckets
-      cardsByRarity = { common:[], uncommon:[], rare:[], ultra:[], secret:[] };
-      for (const c of cards){
-        const bucket = classifyRarity(c.rarity, c);
-        const image = (c.images && (c.images.small || c.images.large)) || c.imageUrl || null;
-        const entry = { id: c.id, name: c.name, image, raw: c };
-        if (cardsByRarity[bucket]) cardsByRarity[bucket].push(entry);
-        else cardsByRarity.common.push(entry);
-      }
-      // mark loaded
-      loaded = true;
-      setStatus('Base Set loaded — ready to open packs', 'green');
-      openBtn.disabled = false;
-      return true;
+      const res = await fetch(url); // worker handles API key header
+      if (!res.ok) throw new Error('bad');
+      const json = await res.json();
+      return json;
     } catch (e) {
-      // short wait before retry (no console logging)
-      await new Promise(r => setTimeout(r, 650));
+      await new Promise(r=>setTimeout(r, 600 + i*300));
     }
   }
-  // failed all retries
-  loaded = false;
-  setStatus('Failed to load Base Set cards. Check connection or API key.', 'red');
-  openBtn.disabled = true;
-  return false;
+  return null;
 }
 
-// preload image helper
-function preloadImage(url, timeout = 4500){
-  return new Promise(resolve => {
+/* load cards and bucket them */
+async function loadBaseSet(){
+  const data = await fetchWithRetries(FETCH_URL, 3);
+  if (!data || !data.data || !Array.isArray(data.data) || data.data.length === 0){
+    loaded = false;
+    setStatus('Failed to load Base Set cards. Check connection or API key.', 'red');
+    openBtn.disabled = true;
+    return false;
+  }
+
+  // clear buckets
+  cardsByRarity = { common:[], uncommon:[], rare:[], ultra:[], secret:[] };
+
+  for (const c of data.data){
+    const bucket = classifyRarity(c.rarity, c);
+    const image = (c.images && (c.images.small || c.images.large)) || c.imageUrl || null;
+    const entry = { id: c.id, name: c.name, image, raw: c };
+    if (cardsByRarity[bucket]) cardsByRarity[bucket].push(entry);
+    else cardsByRarity.common.push(entry);
+  }
+
+  loaded = true;
+  setStatus('Base Set loaded — ready to open packs', 'green');
+  openBtn.disabled = false;
+  return true;
+}
+
+/* preload image (timeout) */
+function preloadImage(url, timeout=4500){
+  return new Promise(resolve=>{
     if (!url){ resolve(false); return; }
     const img = new Image();
-    let finished = false;
-    const done = ok => { if (finished) return; finished = true; resolve(ok); };
-    img.onload = () => done(true);
-    img.onerror = () => done(false);
+    let done=false;
+    const finish = ok => { if(done) return; done=true; resolve(ok) };
+    img.onload = ()=> finish(true);
+    img.onerror = ()=> finish(false);
     img.src = url;
-    setTimeout(()=> done(false), timeout);
+    setTimeout(()=> finish(false), timeout);
   });
 }
 
-// pick helper, fallback to combined if empty
+/* pick from bucket with fallback */
 function pickFromBucket(bucket){
   const arr = cardsByRarity[bucket] || [];
   if (arr.length) return arr[Math.floor(Math.random()*arr.length)];
@@ -230,7 +258,7 @@ function pickFromBucket(bucket){
   return all.length ? all[Math.floor(Math.random()*all.length)] : null;
 }
 
-// create revealed card DOM
+/* create revealed card DOM */
 function createRevealedCard(entry, bucketKey){
   const el = document.createElement('div');
   el.className = 'revealed-card ' + (RARITY_UI[bucketKey] || '');
@@ -258,87 +286,155 @@ function createRevealedCard(entry, bucketKey){
   return el;
 }
 
+/* escape helper */
 function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// pack composition: 3 commons, 1 uncommon, 1 rare-or-better
-async function generateWeightedPack(){
-  // ensure loaded
+/* pack composition generator: 3 commons, 1 uncommon, 1 rare-or-better */
+function generateWeightedPack(){
   if (!loaded) return null;
   const picks = [];
-  // 3 commons
   for (let i=0;i<3;i++){
     const c = pickFromBucket('common');
     if (c) picks.push({entry:c, bucket:'common'});
   }
-  // 1 uncommon (fallback to common if none)
   const uc = pickFromBucket('uncommon') || pickFromBucket('common');
-  if (uc) picks.push({entry:uc, bucket: uc && (cardsByRarity.uncommon.includes(uc) ? 'uncommon' : 'common')});
-  // 1 guaranteed rare-or-better: prefer rare, else ultra, else secret, else fallback
+  if (uc) {
+    const bucket = (cardsByRarity.uncommon.includes(uc)) ? 'uncommon' : 'common';
+    picks.push({entry:uc, bucket});
+  }
+  // rare-or-better: prefer rare, then ultra, then secret, fallback to common
   let rarePick = pickFromBucket('rare') || pickFromBucket('ultra') || pickFromBucket('secret') || pickFromBucket('common');
-  const rareBucket = (() => {
-    if (cardsByRarity.rare.includes(rarePick)) return 'rare';
-    if (cardsByRarity.ultra.includes(rarePick)) return 'ultra';
-    if (cardsByRarity.secret.includes(rarePick)) return 'secret';
-    return 'common';
-  })();
+  const rareBucket = (cardsByRarity.rare.includes(rarePick)) ? 'rare' : (cardsByRarity.ultra.includes(rarePick) ? 'ultra' : (cardsByRarity.secret.includes(rarePick) ? 'secret' : 'common'));
   if (rarePick) picks.push({entry:rarePick, bucket:rareBucket});
   return picks;
 }
 
-// Reveal the pack: preload chosen images, deduct coins, sequential flip
+/* ---------------- Audio: synthesize a digital whoosh with WebAudio ----------------
+   - This avoids external audio files and keeps the file self-contained.
+   - Returns a Promise that resolves when the sound finishes playing.
+*/
+function playDigitalWhoosh(durationMs = 600){
+  return new Promise(resolve=>{
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+      // white noise buffer
+      const bufferSize = ctx.sampleRate * (durationMs/1000);
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i=0;i<bufferSize;i++){
+        // noise with slight envelope shaping
+        data[i] = (Math.random()*2 - 1) * (1 - i/bufferSize) * 0.8;
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      // sweep filter for "digital whoosh" character
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1200, now);
+      filter.frequency.exponentialRampToValueAtTime(8000, now + durationMs/1000 * 0.7);
+
+      // gain envelope
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.9, now + 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.08, now + durationMs/1000 * 0.6);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + durationMs/1000);
+
+      // optional tone layer for digital sheen
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(900, now);
+      osc.frequency.exponentialRampToValueAtTime(2400, now + durationMs/1000 * 0.7);
+      const oscGain = ctx.createGain();
+      oscGain.gain.setValueAtTime(0.0, now);
+      oscGain.gain.linearRampToValueAtTime(0.14, now + 0.02);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, now + durationMs/1000);
+
+      // connect graph
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.connect(oscGain);
+      oscGain.connect(ctx.destination);
+
+      noise.start(now);
+      osc.start(now);
+      noise.stop(now + durationMs/1000);
+      osc.stop(now + durationMs/1000);
+
+      // cleanup after sound stops
+      setTimeout(()=>{
+        try { ctx.close && ctx.close(); } catch(e){}
+        resolve();
+      }, durationMs + 30);
+    } catch (e) {
+      // if audio fails, just resolve silently
+      resolve();
+    }
+  });
+}
+
+/* ---------------- Reveal pack flow ---------------- */
 async function revealPack(){
   if (!loaded) return;
   if (coins < PACK_COST){ alert('Not enough coins'); return; }
-
-  // disable open button while processing
   openBtn.disabled = true;
 
-  // generate picks
-  const generated = await generateWeightedPack();
-  if (!generated || !generated.length){
+  // generate pack composition
+  const picks = generateWeightedPack();
+  if (!picks || !picks.length){
     setStatus('No cards available. Try again later.', 'red');
     openBtn.disabled = false;
     return;
   }
 
-  // Preload images
-  const preload = await Promise.all(generated.map(g => preloadImage(g.entry.image)));
-  for (let i=0;i<generated.length;i++){
-    if (!preload[i]) generated[i].entry.image = CARD_BACK_DATAURI;
+  // preload images for picks
+  const preloadResults = await Promise.all(picks.map(p => preloadImage(p.entry.image)));
+  for (let i=0;i<picks.length;i++){
+    if (!preloadResults[i]) picks[i].entry.image = CARD_BACK_DATAURI;
   }
 
   // deduct coins
   coins -= PACK_COST;
   saveState();
 
-  // clear stage
+  // clear stage and show suspense
   cardsStage.innerHTML = '';
+  // short intentional suspense before whoosh
+  await new Promise(r=>setTimeout(r, 180));
 
-  // small suspense delay before flipping first card
-  await new Promise(r => setTimeout(r, 500));
+  // play whoosh AFTER loading message finished (we ensured loading finished earlier)
+  await playDigitalWhoosh(600);
 
-  // reveal sequentially
-  for (let i=0;i<generated.length;i++){
-    const g = generated[i];
-    const el = createRevealedCard(g.entry, g.bucket);
+  // small pause, then reveal sequentially
+  await new Promise(r=>setTimeout(r, 120));
+  for (let i=0;i<picks.length;i++){
+    const p = picks[i];
+    const el = createRevealedCard(p.entry, p.bucket);
     el.classList.add('cardIn');
     cardsStage.appendChild(el);
-    await new Promise(r => setTimeout(r, 260 + i*420));
+    // stagger and flip
+    await new Promise(r=>setTimeout(r, 260 + i*420));
     el.classList.add('flipped');
 
     // add to collection
-    const key = `${g.entry.id || g.entry.name}|${g.bucket}`;
+    const key = `${p.entry.id || p.entry.name}|${p.bucket}`;
     collection[key] = (collection[key] || 0) + 1;
     saveState();
     renderCollection();
 
+    // small bounce animation (non-essential)
     try { el.animate([{transform:'translateY(0)'},{transform:'translateY(-8px)'},{transform:'translateY(0)'}],{duration:420,easing:'ease-out'}); } catch(e){}
   }
 
   openBtn.disabled = false;
 }
 
-// render collection
+/* render collection in sidebar */
 function renderCollection(){
   collectionGrid.innerHTML = '';
   const entries = Object.entries(collection).map(([k,v])=>{
@@ -355,7 +451,10 @@ function renderCollection(){
     return order.indexOf(a.bucket) - order.indexOf(b.bucket);
   });
 
-  if (!entries.length){ collectionGrid.innerHTML = '<div class="muted">No cards yet — open packs to collect Pokémon!</div>'; return; }
+  if (!entries.length){
+    collectionGrid.innerHTML = '<div class="muted">No cards yet — open packs to collect Pokémon!</div>'; 
+    return;
+  }
   for (const e of entries){
     const box = document.createElement('div');
     box.className = 'col-card';
@@ -370,19 +469,29 @@ function renderCollection(){
   }
 }
 
-// initial bootstrap
+/* ---------------- Init ---------------- */
 (async function init(){
   renderCollection();
   saveState();
-  await fetchBaseSet(3);
+  // fetch Base Set via worker proxy
+  await loadBaseSet();
 })();
 
-// UI handlers
-openBtn.addEventListener('click', async ()=>{ openBtn.disabled = true; await revealPack(); openBtn.disabled = false; });
+/* ---------------- UI handlers ---------------- */
+openBtn.addEventListener('click', async ()=>{
+  openBtn.disabled = true;
+  await revealPack();
+  openBtn.disabled = false;
+});
 resetBtn.addEventListener('click', ()=>{
   if (!confirm('Reset coins and collection?')) return;
-  coins = STARTING_COINS; collection = {}; localStorage.removeItem(COIN_KEY); localStorage.removeItem(COLLECTION_KEY);
-  saveState(); renderCollection(); cardsStage.innerHTML = '<div id="stageHint" style="opacity:.06;font-weight:900;font-size:64px">POKÉ</div>';
+  coins = STARTING_COINS;
+  collection = {};
+  localStorage.removeItem(COIN_KEY);
+  localStorage.removeItem(COLLECTION_KEY);
+  saveState();
+  renderCollection();
+  cardsStage.innerHTML = '<div id="stageHint" style="opacity:.06;font-weight:900;font-size:64px">POKÉ</div>';
 });
 </script>
 </body>
